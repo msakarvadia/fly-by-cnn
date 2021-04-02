@@ -48,7 +48,6 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Computes maximum magnitude/scaling factor using bounding box and appends to file')
-    #TODO: MAKE AT LEAST ONE OF THE DIRECTRY OR SURF REQUIRED
     parser.add_argument('--surf', type=str, default=None, help='Target surface or mesh')
     parser.add_argument('--out', type=str, default="surf.vtk", help='Output filename')
     parser.add_argument('--property_file', type=str, default=None, help='.txt file with surface property')
