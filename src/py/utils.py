@@ -158,6 +158,20 @@ def ReadSurf(fileName):
 
     return surf
 
+def WriteSurf(surf, fileName):
+    fname, extension = os.path.splitext(fileName)
+    extension = extension.lower()
+    print("Writing:", fileName)
+    if extension == ".vtk":
+        writer = vtk.vtkPolyDataWriter()
+    elif extension == ".stl":
+        writer = vtk.vtkSTLWriter()
+
+    writer.SetFileName(fileName)
+    writer.SetInputData(surf)
+    writer.Update()
+
+
 def ScaleSurf(surf, scale_factor):
     shapedatapoints = surf.GetPoints()
     
@@ -188,7 +202,7 @@ def ScaleSurf(surf, scale_factor):
     if(scale_factor == -1):
         bounds_max_arr = np.array(bounds_max_v)
         scale_factor = 1/np.linalg.norm(bounds_max_arr - mean_arr)
-        print(scale_factor)
+        # print(scale_factor)
 
     #scale points of the shape by scale factor
     shape_points = np.array(shape_points)
@@ -200,7 +214,7 @@ def ScaleSurf(surf, scale_factor):
 
     surf.SetPoints(shapedatapoints)
 
-    return surf
+    return surf, mean_arr, scale_factor
 
 def GetActor(surf):
 	surfMapper = vtk.vtkPolyDataMapper()
@@ -210,17 +224,41 @@ def GetActor(surf):
 	surfActor.SetMapper(surfMapper)
 
 	return surfActor
+def GetTransform(rotationAngle, rotationVector):
+    transform = vtk.vtkTransform()
+    transform.RotateWXYZ(rotationAngle, rotationVector[0], rotationVector[1], rotationVector[2])
+    return transform
 
 def RotateSurf(surf, rotationAngle, rotationVector):
 	print("angle:", rotationAngle, "vector:", rotationVector)
-	transform = vtk.vtkTransform()
-	transform.RotateWXYZ(rotationAngle, rotationVector[0], rotationVector[1], rotationVector[2]);
+	transform = GetTransform(rotationAngle, rotationVector)
+	return RotateTransform(surf, transform)
 
+def RotateInverse(surf, rotationAngle, rotationVector):
+    print("angle:", rotationAngle, "vector:", rotationVector)
+    transform = vtk.vtkTransform()
+    transform.RotateWXYZ(rotationAngle, rotationVector[0], rotationVector[1], rotationVector[2])
+   
+    transform_i = vtk.vtkTransform()
+    m_inverse = vtk.vtkMatrix4x4()
+    transform.GetInverse(m_inverse)
+    transform_i.SetMatrix(m_inverse)
+
+    return RotateTransform(surf, transform_i)
+
+def RotateTransform(surf, transform):
 	transformFilter = vtk.vtkTransformPolyDataFilter()
 	transformFilter.SetTransform(transform)
 	transformFilter.SetInputData(surf)
 	transformFilter.Update()
 	return transformFilter.GetOutput()
+
+def RotateNpTransform(surf, angle, np_transform):
+	np_tran = np.load(np_transform)
+
+	rotationAngle = -angle
+	rotationVector = np_tran
+	return RotateInverse(surf, rotationAngle, rotationVector)
 
 def RandomRotation(surf):
 	rotationVector = np.random.random(3)*2.0 - 1.0
@@ -228,9 +266,61 @@ def RandomRotation(surf):
 	rotationAngle = np.random.random()*360.0
 	return RotateSurf(surf, rotationAngle, rotationVector)
 
+
+# def orientationTraining(surf, pathLabel):
+# 	rotationVector = np.random.random(3)*2.0 - 1.0
+# 	rotationVector = rotationVector/np.linalg.norm(rotationVector)
+# 	rotationAngle = np.random.random()*360.0
+
+# 	print("angle:", rotationAngle, "vector:", rotationVector)
+# 	transform = vtk.vtkTransform()
+# 	transform.RotateWXYZ(rotationAngle, rotationVector[0], rotationVector[1], rotationVector[2])
+
+# 	transformFilter = vtk.vtkTransformPolyDataFilter()
+# 	transformFilter.SetTransform(transform)
+# 	transformFilter.SetInputData(surf)
+# 	transformFilter.Update()
+
+# 	theta = np.radians(rotationAngle)
+# 	c, s = np.cos(theta), np.sin(theta)
+# 	x, y, z = rotationVector[0], rotationVector[1], rotationVector[2]
+# 	R = np.array([[c+pow(x,2)*(1-c), x*y*(1-c)-z*s,    x*z*(1-c)+y*s], 
+# 				  [y*x*(1-c)+z*s,    c+pow(y,2)*(1-c), y*z*(1-c)-x*s], 
+# 				  [z*x*(1-c)-y*s,    z*y*(1-c)+x*s,    c+pow(z,2)*(1-c)]])
+
+# 	# print("matrice rotation")
+# 	# print(R)
+# 	# print("matrice inverse/transpose:")
+# 	Rt = np.transpose(R)
+# 	# print(Rt)
+# 	np.save(pathLabel, Rt)
+# 	return transformFilter.GetOutput()
+
+
 def GetUnitSurf(surf):
 	surf, surf_mean, surf_scale = Normalization(surf)
 	return surf
+
+def GetColoredActor(surf, property_name):
+    hueLut = vtk.vtkLookupTable()
+    hueLut.SetTableRange(-1, 4)
+    hueLut.SetHueRange(0, 1)
+    hueLut.SetSaturationRange(1, 1)
+    hueLut.SetValueRange(1, 1)
+    hueLut.Build()
+
+    surf.GetPointData().SetActiveScalars(property_name)
+
+    actor = GetActor(surf)
+    actor.GetMapper().ScalarVisibilityOn()
+    actor.GetMapper().SetScalarModeToUsePointData()
+    actor.GetMapper().SetColorModeToMapScalars()
+    actor.GetMapper().SetUseLookupTableScalarRange(True)
+
+    actor.GetMapper().SetLookupTable(hueLut)
+
+    return actor
+
 
 def GetPropertyActor(surf, property_name):
 
@@ -540,13 +630,13 @@ class ExtractPointFeaturesClass():
 
 		return point_features
 
-def ExtractPointFeatures(surf, point_ids_rgb, point_features_name):
+def ExtractPointFeatures(surf, point_ids_rgb, point_features_name, zero=0):
 	
 	point_ids_rgb_shape = point_ids_rgb.shape
 
 	point_features = surf.GetPointData().GetScalars(point_features_name)
 	point_features_np = vtk_to_numpy(point_features)
-	zero = np.zeros(point_features.GetNumberOfComponents())
+	zero = np.zeros(point_features.GetNumberOfComponents()) + zero
 
 	with Pool(cpu_count()) as p:
 		feat = p.map(ExtractPointFeaturesClass(point_features_np, zero), point_ids_rgb)
