@@ -12,7 +12,7 @@ import vtk
 
 parser = argparse.ArgumentParser(description='Predict an input with a trained neural network', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--surf', type=str, help='Input surface mesh to label', required=True)
-parser.add_argument('--model', type=str, help='Model to do segmentation', default="/app/u_seg_nn_v3.0")
+parser.add_argument('--model', type=str, help='Model to do segmentation', default="/app/u_seg_nn_v3.1")
 parser.add_argument('--out', type=str, help='Output model with labels', default="out.vtk")
 
 args = parser.parse_args()
@@ -22,7 +22,7 @@ start_time = time.time()
 surf = fbf.ReadSurf(args.surf)
 unit_surf = fbf.GetUnitSurf(surf)
 
-sphere = fbf.CreateIcosahedron(radius=2, sl=2)
+sphere = fbf.CreateIcosahedron(radius=2.75, sl=3)
 flyby = fbf.FlyByGenerator(sphere, resolution=512, visualize=False, use_z=True, split_z=True)
 
 surf_actor = fbf.GetNormalsActor(unit_surf)
@@ -42,15 +42,16 @@ img_point_id_map_np = img_point_id_map_np.reshape((-1, img_point_id_map_np.shape
 flyby_features.removeActors()
 
 
-if os.path.exist(args.model):
+if os.path.exists(args.model):
 	model = tf.keras.models.load_model(args.model, custom_objects={'tf': tf})
 	model.summary()
 else:
 	print("Please set the model directory to a valid path", file=sys.stderr)
 
 print("Predict ...")
-img_predict_np = model.predict(img_np)
-img_predict_np = img_predict_np.reshape((-1, img_predict_np.shape[-1]))
+img_predict_np = model.predict(tf.expand_dims(img_np, axis=0))
+img_predict_np = np.argmax(np.squeeze(img_predict_np, axis=0), axis=-1)
+img_predict_np = img_predict_np.reshape(-1)
 
 prediction_array_count = np.zeros([surf.GetNumberOfPoints(), int(np.max(img_predict_np) + 1)])
 
@@ -86,6 +87,10 @@ polydatawriter.SetFileName(outfilename_pre)
 polydatawriter.SetInputData(surf)
 polydatawriter.Write()
 
+print("Dilate...")
+#Dilate GUM label
+post_process.DilateLabel(surf, real_labels, 3, iterations=4)
+
 labels_range = np.zeros(2)
 real_labels.GetRange(labels_range)
 for label in range(int(labels_range[0]), int(labels_range[1]) + 1):
@@ -109,6 +114,15 @@ post_process.ReLabel(surf, real_labels, 3, -1)
 print("Connectivity...")
 #Do the connected component analysis and assign labels starting at label 2
 post_process.ConnectivityLabeling(surf, real_labels, 2, 2)
+
+out_filename = args.out
+outfilename_connectivity = out_filename
+outfilename_connectivity = os.path.splitext(outfilename_connectivity)[0] + "_connectivity.vtk"
+print("Writting:", outfilename_connectivity)
+polydatawriter = vtk.vtkPolyDataWriter()
+polydatawriter.SetFileName(outfilename_connectivity)
+polydatawriter.SetInputData(surf)
+polydatawriter.Write()
 
 print("Eroding...")
 #Erode the gum label 
